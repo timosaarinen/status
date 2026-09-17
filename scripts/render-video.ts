@@ -1,6 +1,7 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { chromium } from "playwright";
+import { C64_BOOT_END, C64_BOOT_KEY_TIMES, synthC64TypewriterClick } from "../src/boot";
 import { analyseAudio, decodeMono, findRootMp3, probeDuration } from "./audio";
 
 const FPS = 50;
@@ -39,6 +40,50 @@ function assertTool(name: string): void {
   if (result.exitCode !== 0) throw new Error(`${name} is required but was not found in PATH.`);
 }
 
+function writePcmWav(path: string, samples: Float32Array, sampleRate: number): void {
+  const bytesPerSample = 2;
+  const dataSize = samples.length * bytesPerSample;
+  const wav = Buffer.alloc(44 + dataSize);
+  wav.write("RIFF", 0, "ascii");
+  wav.writeUInt32LE(36 + dataSize, 4);
+  wav.write("WAVE", 8, "ascii");
+  wav.write("fmt ", 12, "ascii");
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate * bytesPerSample, 28);
+  wav.writeUInt16LE(bytesPerSample, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36, "ascii");
+  wav.writeUInt32LE(dataSize, 40);
+
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index] ?? 0));
+    wav.writeInt16LE(Math.round(sample * 32767), 44 + index * bytesPerSample);
+  }
+  writeFileSync(path, wav);
+}
+
+function renderBootClickTrack(duration: number, path: string): void {
+  const clickDuration = Math.min(duration, C64_BOOT_END + 0.2);
+  const mix = new Float32Array(Math.max(1, Math.ceil(clickDuration * SAMPLE_RATE)));
+
+  for (let keyIndex = 0; keyIndex < C64_BOOT_KEY_TIMES.length; keyIndex += 1) {
+    const keyTime = C64_BOOT_KEY_TIMES[keyIndex] ?? Infinity;
+    if (keyTime >= clickDuration) break;
+    const click = synthC64TypewriterClick(SAMPLE_RATE, keyIndex % 4);
+    const start = Math.floor(keyTime * SAMPLE_RATE);
+    for (let sampleIndex = 0; sampleIndex < click.length; sampleIndex += 1) {
+      const target = start + sampleIndex;
+      if (target >= mix.length) break;
+      mix[target] = (mix[target] ?? 0) + (click[sampleIndex] ?? 0);
+    }
+  }
+
+  writePcmWav(path, mix, SAMPLE_RATE);
+}
+
 async function main(): Promise<void> {
   const options = parseOptions(Bun.argv.slice(2));
   assertTool("ffmpeg");
@@ -47,7 +92,10 @@ async function main(): Promise<void> {
   const fullDuration = probeDuration(audioPath);
   const duration = options.seconds ? Math.min(fullDuration, options.seconds) : fullDuration;
   const frameCount = Math.ceil(duration * FPS);
-  mkdirSync(resolve(options.output, ".."), { recursive: true });
+  const outputDirectory = resolve(options.output, "..");
+  const clickTrackPath = resolve(outputDirectory, ".status-c64-keyclicks.wav");
+  mkdirSync(outputDirectory, { recursive: true });
+  renderBootClickTrack(duration, clickTrackPath);
 
   console.log(`STATUS cracktro renderer`);
   console.log(`Audio: ${basename(audioPath)} (${fullDuration.toFixed(3)} s)`);
@@ -84,7 +132,9 @@ async function main(): Promise<void> {
       "ffmpeg", "-y", "-v", "warning",
       "-framerate", String(FPS), "-f", "image2pipe", "-vcodec", "png", "-i", "pipe:0",
       "-i", audioPath,
-      "-map", "0:v:0", "-map", "1:a:0",
+      "-i", clickTrackPath,
+      "-filter_complex", "[2:a]volume=1.25[clicks];[1:a][clicks]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.96[a]",
+      "-map", "0:v:0", "-map", "[a]",
       "-vf", "scale=1600:1000:flags=neighbor,pad=1920:1080:160:40:black",
       "-c:v", "libx264", "-preset", "medium", "-crf", "14", "-pix_fmt", "yuv420p",
       "-c:a", "aac", "-b:a", "320k", "-shortest", "-movflags", "+faststart",
@@ -118,6 +168,7 @@ async function main(): Promise<void> {
     await browser?.close();
     vite.kill();
     await vite.exited;
+    if (existsSync(clickTrackPath)) unlinkSync(clickTrackPath);
   }
 }
 
