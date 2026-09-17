@@ -9,6 +9,7 @@ export interface AudioFrame {
   energy: number;
   beat: number;
   high: number;
+  bass: number;
 }
 
 export interface RenderApi {
@@ -20,6 +21,8 @@ const SCREEN_HEIGHT = 200;
 const SCROLLER_TOP = 157;
 const SCROLLER_SPEED = 50;
 const SCROLLER_ADVANCE = 6;
+const PATH_TRACE_START = 43;
+const PATH_TRACE_END = 55;
 const SCROLLER =
   "*** PAIKALLA. ***  WELCOME TO A CRACKTRO FROM THE WRONG TIMELINE.  " +
   "YOU MAY THINK YOU KNOW WHAT TIMO IS BUILDING.  YOU MAY HAVE SEEN THE CODE, " +
@@ -88,7 +91,9 @@ export class CracktroDemo implements RenderApi {
         uTime: { value: 0 },
         uEnergy: { value: 0 },
         uBeat: { value: 0 },
+        uBass: { value: 0 },
         uSection: { value: 0 },
+        uTraceActive: { value: 0 },
         uResolution: { value: new THREE.Vector2(160, 100) }
       }
     });
@@ -98,10 +103,14 @@ export class CracktroDemo implements RenderApi {
   renderFrame(time: number, audio: AudioFrame): void {
     const energy = clamp(audio.energy);
     const beat = clamp(audio.beat);
+    const bass = clamp(audio.bass);
+    const traceActive = time >= PATH_TRACE_START && time < PATH_TRACE_END;
     this.material.uniforms.uTime!.value = time;
     this.material.uniforms.uEnergy!.value = energy;
     this.material.uniforms.uBeat!.value = beat;
+    this.material.uniforms.uBass!.value = bass;
     this.material.uniforms.uSection!.value = Math.floor(time / 16);
+    this.material.uniforms.uTraceActive!.value = traceActive ? 1 : 0;
     this.renderer.render(this.scene, this.camera);
 
     const context = this.context;
@@ -110,12 +119,42 @@ export class CracktroDemo implements RenderApi {
     context.imageSmoothingEnabled = false;
     context.drawImage(this.shaderCanvas, 0, 0, 160, 100, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    this.drawRasterAccents(time);
-    this.drawTitle(time, energy, beat);
-    this.drawScroller(time, beat);
-    drawPhotoPart(context, time, energy, beat);
+    if (traceActive) {
+      this.drawPathTracerOverlay(time, beat, bass);
+    } else {
+      this.drawRasterAccents(time);
+      this.drawTitle(time, energy, beat);
+      this.drawScroller(time, beat);
+      drawPhotoPart(context, time, energy, beat);
+    }
     this.drawBorder(time, beat);
     this.drawBootText(time);
+  }
+
+  private drawPathTracerOverlay(time: number, beat: number, bass: number): void {
+    const context = this.context;
+    const localTime = time - PATH_TRACE_START;
+    const blink = Math.floor(localTime * 4) % 2 === 0;
+    const titleColor = beat > 0.82 ? C64.white : C64.lightBlue;
+    const subtitle = "3 BOUNCES / 4 SPP / 16 COLOURS";
+    const rays = "38911 RAYS FREE";
+
+    context.save();
+    context.globalAlpha = 0.88;
+    context.fillStyle = C64.black;
+    context.fillRect(0, 0, SCREEN_WIDTH, 18);
+    context.fillRect(0, 142, SCREEN_WIDTH, 17);
+    context.restore();
+
+    drawText(context, "PATH TRACER 64", centeredX("PATH TRACER 64", 2), 2, titleColor, 2);
+    drawText(context, subtitle, centeredX(subtitle, 1), 145, C64.lightGray, 1);
+    drawText(context, rays, centeredX(rays, 1), 153, blink ? C64.yellow : C64.orange, 1);
+
+    const meterWidth = Math.round(42 * bass);
+    context.fillStyle = C64.darkGray;
+    context.fillRect(6, 132, 44, 4);
+    context.fillStyle = bass > 0.72 ? C64.yellow : C64.purple;
+    context.fillRect(7, 133, meterWidth, 2);
   }
 
   private drawRasterAccents(time: number): void {
