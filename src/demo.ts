@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { C64, C64_COLORS } from "./palette";
+import { C64 } from "./palette";
 import { drawGlyph, drawText, textWidth } from "./bitmap-font";
 import { fragmentShader, vertexShader } from "./shader";
 
@@ -13,6 +13,11 @@ export interface RenderApi {
   renderFrame(time: number, audio: AudioFrame): void;
 }
 
+const SCREEN_WIDTH = 320;
+const SCREEN_HEIGHT = 200;
+const SCROLLER_TOP = 157;
+const SCROLLER_SPEED = 50;
+const SCROLLER_ADVANCE = 6;
 const SCROLLER =
   "*** PAIKALLA. ***  WELCOME TO A CRACKTRO FROM THE WRONG TIMELINE.  " +
   "YOU MAY THINK YOU KNOW WHAT TIMO IS BUILDING.  YOU MAY HAVE SEEN THE CODE, " +
@@ -23,18 +28,22 @@ const SCROLLER =
   "STAYED DEAD, AND EVERY SENSIBLE PERSON WHO KNEW BETTER THAN TO BEGIN.  STILL HERE?  " +
   "GOOD.  THE NEXT PROJECT STARTED FIVE MINUTES AGO.  NOT EVEN FUCKING CLOSE.  ***     ";
 
+const SCROLLER_COLORS = [C64.lightBlue, C64.cyan, C64.white, C64.yellow, C64.lightRed] as const;
+
 function clamp(value: number, minimum = 0, maximum = 1): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
 function centeredX(text: string, scale: number): number {
-  return Math.floor((320 - textWidth(text, scale)) / 2);
+  return Math.floor((SCREEN_WIDTH - textWidth(text, scale)) / 2);
 }
 
 export class CracktroDemo implements RenderApi {
   private readonly shaderCanvas: HTMLCanvasElement;
   private readonly screen: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
+  private readonly scrollerStrip: HTMLCanvasElement;
+  private readonly scrollerContext: CanvasRenderingContext2D;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly material: THREE.ShaderMaterial;
   private readonly scene = new THREE.Scene();
@@ -47,6 +56,14 @@ export class CracktroDemo implements RenderApi {
     if (!context) throw new Error("2D canvas is unavailable");
     this.context = context;
     this.context.imageSmoothingEnabled = false;
+
+    this.scrollerStrip = document.createElement("canvas");
+    this.scrollerStrip.width = SCREEN_WIDTH;
+    this.scrollerStrip.height = 7;
+    const scrollerContext = this.scrollerStrip.getContext("2d");
+    if (!scrollerContext) throw new Error("Scroller canvas is unavailable");
+    this.scrollerContext = scrollerContext;
+    this.scrollerContext.imageSmoothingEnabled = false;
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: shaderCanvas,
@@ -86,102 +103,113 @@ export class CracktroDemo implements RenderApi {
 
     const context = this.context;
     context.fillStyle = C64.black;
-    context.fillRect(0, 0, 320, 200);
+    context.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
     context.imageSmoothingEnabled = false;
-    context.drawImage(this.shaderCanvas, 0, 0, 160, 100, 0, 0, 320, 200);
+    context.drawImage(this.shaderCanvas, 0, 0, 160, 100, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    this.drawRasterInterrupts(time, beat);
+    this.drawRasterAccents(time);
     this.drawTitle(time, energy, beat);
-    this.drawScroller(time, energy, beat);
+    this.drawScroller(time, beat);
     this.drawBorder(time, beat);
     this.drawBootText(time);
   }
 
-  private drawRasterInterrupts(time: number, beat: number): void {
+  private drawRasterAccents(time: number): void {
     const context = this.context;
+    const bars = [
+      { baseY: 132, phase: 0, color: C64.purple },
+      { baseY: 139, phase: 1.8, color: C64.blue },
+      { baseY: 146, phase: 3.2, color: C64.lightBlue }
+    ];
+
     context.save();
-    context.globalCompositeOperation = "screen";
-    for (let index = 0; index < 5; index += 1) {
-      const y = Math.round(70 + Math.sin(time * (1.4 + index * 0.07) + index * 1.9) * 48 + index * 8);
-      const height = 2 + ((index + Math.floor(time * 8)) % 3);
-      context.fillStyle = C64_COLORS[(index * 3 + Math.floor(time * 7)) % C64_COLORS.length] ?? C64.white;
-      context.globalAlpha = 0.38 + beat * 0.35;
-      context.fillRect(0, y, 320, height);
+    context.globalAlpha = 0.72;
+    for (const bar of bars) {
+      const y = Math.round(bar.baseY + Math.sin(time * 1.1 + bar.phase) * 2);
+      context.fillStyle = C64.black;
+      context.fillRect(0, y - 1, SCREEN_WIDTH, 3);
+      context.fillStyle = bar.color;
+      context.fillRect(0, y, SCREEN_WIDTH, 1);
     }
     context.restore();
   }
 
   private drawTitle(time: number, energy: number, beat: number): void {
-    const context = this.context;
-    const cycle = Math.floor(time * 8 + beat * 7);
-    const wobble = Math.round(Math.sin(time * 2.2) * (1 + beat * 3));
-    const visible = time > 0.8;
-    if (!visible) return;
+    if (time <= 0.8) return;
 
+    const context = this.context;
+    const pulse = Math.sin(time * 1.45) > 0 ? C64.purple : C64.blue;
     const lines = [
       { text: "NOT EVEN", y: 19, scale: 3, color: C64.lightBlue },
       { text: "FUCKING", y: 45, scale: 4, color: C64.yellow },
       { text: "CLOSE", y: 79, scale: 4, color: C64.cyan }
     ];
 
-    for (const [lineIndex, line] of lines.entries()) {
-      const x = centeredX(line.text, line.scale) + (lineIndex === 1 ? wobble : 0);
-      const shadowColor = C64_COLORS[(cycle + lineIndex * 4) % C64_COLORS.length] ?? C64.purple;
+    for (const line of lines) {
+      const x = centeredX(line.text, line.scale);
       drawText(context, line.text, x + 4, line.y + 4, C64.black, line.scale);
-      drawText(context, line.text, x + 2, line.y + 2, shadowColor, line.scale);
+      drawText(context, line.text, x + 2, line.y + 2, pulse, line.scale);
       drawText(context, line.text, x, line.y, line.color, line.scale);
     }
 
-    if (beat > 0.7) {
+    const tag = energy < 0.08 && time > 2 ? "THINK YOU KNOW ME?" : "STATUS / 2026";
+    drawText(context, tag, centeredX(tag, 1), 116, C64.lightGray, 1);
+
+    if (beat > 0.78) {
       context.save();
-      context.globalAlpha = beat * 0.55;
+      context.globalAlpha = (beat - 0.78) * 2.4;
       context.strokeStyle = C64.white;
       context.lineWidth = 1;
-      const inset = Math.floor((1 - beat) * 18);
-      context.strokeRect(inset, inset, 319 - inset * 2, 199 - inset * 2);
+      context.strokeRect(3, 3, 313, 193);
       context.restore();
-    }
-
-    if (energy < 0.08 && time > 2) {
-      drawText(context, "THINK YOU KNOW ME?", centeredX("THINK YOU KNOW ME?", 1), 112, C64.lightGray, 1);
     }
   }
 
-  private drawScroller(time: number, energy: number, beat: number): void {
+  private drawScroller(time: number, beat: number): void {
     const context = this.context;
-    const speed = 42 + energy * 24;
-    const advance = 6;
-    const totalWidth = SCROLLER.length * advance;
-    const offset = ((time * speed) % totalWidth + totalWidth) % totalWidth;
-    const firstCharacter = Math.floor(offset / advance);
-    const subPixel = offset % advance;
-    const visibleCount = Math.ceil(320 / advance) + 3;
+    const strip = this.scrollerContext;
+    const totalWidth = SCROLLER.length * SCROLLER_ADVANCE;
+    const offset = ((time * SCROLLER_SPEED) % totalWidth + totalWidth) % totalWidth;
+    const firstCharacter = Math.floor(offset / SCROLLER_ADVANCE);
+    const fineOffset = Math.floor(offset % SCROLLER_ADVANCE);
+    const visibleCount = Math.ceil(SCREEN_WIDTH / SCROLLER_ADVANCE) + 2;
 
     context.fillStyle = C64.black;
-    context.fillRect(0, 157, 320, 43);
+    context.fillRect(0, SCROLLER_TOP, SCREEN_WIDTH, SCREEN_HEIGHT - SCROLLER_TOP);
     context.fillStyle = C64.purple;
-    context.fillRect(0, 157, 320, 2);
+    context.fillRect(0, SCROLLER_TOP, SCREEN_WIDTH, 2);
     context.fillStyle = C64.lightBlue;
-    context.fillRect(0, 159, 320, 1);
+    context.fillRect(0, SCROLLER_TOP + 2, SCREEN_WIDTH, 1);
+    context.fillStyle = C64.blue;
+    context.fillRect(0, SCREEN_HEIGHT - 2, SCREEN_WIDTH, 1);
 
+    strip.clearRect(0, 0, SCREEN_WIDTH, 7);
     for (let column = -1; column < visibleCount; column += 1) {
       const sourceIndex = (firstCharacter + column + SCROLLER.length) % SCROLLER.length;
       const character = SCROLLER[sourceIndex] ?? " ";
-      const x = Math.round(column * advance - subPixel);
-      const wave = Math.sin(x * 0.055 + time * 4.3) * (8 + energy * 7);
-      const secondWave = Math.sin(x * 0.019 - time * 2.1) * 3;
-      const y = Math.round(174 + wave + secondWave);
-      const paletteIndex = (Math.floor(x / 18) + Math.floor(time * 6) + 16) % 16;
-      const color = beat > 0.86 ? C64.white : (C64_COLORS[paletteIndex] ?? C64.cyan);
-      drawGlyph(context, character, x + 1, y + 1, C64.black, 1);
-      drawGlyph(context, character, x, y, color, 1);
+      const x = column * SCROLLER_ADVANCE - fineOffset;
+      const color = beat > 0.9
+        ? C64.white
+        : SCROLLER_COLORS[Math.floor(sourceIndex / 3) % SCROLLER_COLORS.length] ?? C64.cyan;
+      drawGlyph(strip, character, x, 0, color, 1);
     }
+
+    context.save();
+    context.imageSmoothingEnabled = false;
+    for (let x = 0; x < SCREEN_WIDTH; x += 1) {
+      const primary = Math.sin(x * 0.057 + time * 2.15) * 8;
+      const secondary = Math.sin(x * 0.021 - time * 1.05 + 1.4) * 2;
+      const y = Math.round(174 + primary + secondary);
+      context.drawImage(this.scrollerStrip, x, 0, 1, 7, x, y, 1, 7);
+    }
+    context.restore();
   }
 
   private drawBorder(time: number, beat: number): void {
     const context = this.context;
-    const colorIndex = (Math.floor(time * 3) + Math.floor(beat * 8)) % 16;
-    context.strokeStyle = C64_COLORS[colorIndex] ?? C64.blue;
+    const colors = [C64.blue, C64.purple, C64.lightBlue] as const;
+    const color = beat > 0.88 ? C64.white : colors[Math.floor(time * 0.75) % colors.length] ?? C64.blue;
+    context.strokeStyle = color;
     context.lineWidth = 2;
     context.strokeRect(1, 1, 318, 198);
   }
@@ -191,7 +219,7 @@ export class CracktroDemo implements RenderApi {
     const phase = Math.floor(time * 12);
     const text = phase < 3 ? "READY." : phase < 6 ? "RUN" : "PAIKALLA.";
     this.context.fillStyle = C64.blue;
-    this.context.fillRect(0, 0, 320, 200);
+    this.context.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
     drawText(this.context, text, 18, 24, C64.lightBlue, 2);
     if (phase >= 3) drawText(this.context, "STATUS 2026", 18, 48, C64.white, 1);
   }
