@@ -166,9 +166,9 @@ export const fragmentShader = /* glsl */ `
   }
 
   vec3 copperBars(vec2 uv) {
-    // Deliberately raster-ish instead of smooth gradient bars. Their slow
-    // choreography is time-driven; the beat only punches width, separation,
-    // palette and brightness so hits feel violent without positional jitter.
+    // Real demo-style raster choreography: every bar travels in a straight
+    // line, bounces at the top/bottom, then heads back the other way. Beat
+    // energy still punches thickness, palette and brightness only.
     float beat = clamp(uBeat, 0.0, 1.0);
     float punch = pow(smoothstep(0.08, 0.96, beat), 0.58);
     float hot = smoothstep(0.76, 1.0, beat);
@@ -177,10 +177,13 @@ export const fragmentShader = /* glsl */ `
 
     for (int i = 0; i < 6; i += 1) {
       float fi = float(i);
-      float lane = fi - 2.5;
-      float center = -0.72 + fi * 0.285;
-      center += sin(uTime * (0.58 + fi * 0.035) + fi * 1.73) * (0.070 + punch * 0.035);
-      center += lane * punch * 0.010;
+
+      // Triangle-wave motion gives a true constant-speed up/down bounce.
+      // The +/-1.08 endpoints put the centre just off-screen before reversal,
+      // so the whole copper strip clears the edge naturally.
+      float phase = mod(uTime * (0.22 + fi * 0.008) + fi * 0.31, 2.0);
+      float travel = 1.0 - abs(phase - 1.0);
+      float center = mix(-1.08, 1.08, travel);
 
       // Thickness is measured in native 100-line shader pixels. A hard hit
       // can more than double it, like an absurd raster interrupt gone loud.
@@ -204,7 +207,7 @@ export const fragmentShader = /* glsl */ `
       stripeColor *= 0.72 + scan * 0.28;
 
       // White-hot one-line cores and occasional secondary echoes on strong
-      // beats make the bars visibly "slam" without moving their base phase.
+      // beats make the bars visibly slam without changing the linear path.
       float core = 1.0 - step(0.55, band);
       stripeColor = mix(stripeColor, pal(1.0), core * hot);
 
