@@ -49,14 +49,15 @@ if (renderMode) {
   let playedBootClicks = 0;
   let suppressBeatFrames = 0;
   let scrubbing = false;
+  let scrubTime: number | undefined;
+  let committedSeekTime: number | undefined;
   let lastAudioFrame: AudioFrame = { energy: 0, beat: 0, high: 0 };
   const clickBuffers: AudioBuffer[] = [];
 
-  // Load metadata immediately so `bun run dev` gets a usable scrubber before
-  // playback. AudioContext creation still waits for a user gesture, as required
-  // by browsers.
+  // Load enough of the media for arbitrary seeking during development. The
+  // AudioContext itself still waits for a user gesture, as required by browsers.
   const audio = new Audio("/__audio.mp3");
-  audio.preload = "metadata";
+  audio.preload = "auto";
 
   const syncBootClickCursor = (time: number): void => {
     let count = 0;
@@ -64,16 +65,31 @@ if (renderMode) {
     playedBootClicks = count;
   };
 
+  const displayedTime = (): number => {
+    if (scrubbing && scrubTime !== undefined) return scrubTime;
+    if (committedSeekTime !== undefined) return committedSeekTime;
+    return audio.currentTime;
+  };
+
+  const settleCommittedSeek = (): void => {
+    if (committedSeekTime === undefined || audio.seeking) return;
+    if (Math.abs(audio.currentTime - committedSeekTime) <= 0.35) {
+      committedSeekTime = undefined;
+    }
+  };
+
   const updateTransport = (): void => {
+    settleCommittedSeek();
     const duration = audio.duration;
+    const shownTime = displayedTime();
     if (Number.isFinite(duration) && duration > 0) {
       timeline.disabled = false;
       timeline.max = String(duration);
-      if (!scrubbing) timeline.value = String(Math.min(audio.currentTime, duration));
-      timecode.textContent = `${formatTime(audio.currentTime)} / ${formatTime(duration)}`;
+      timeline.value = String(Math.max(0, Math.min(duration, shownTime)));
+      timecode.textContent = `${formatTime(shownTime)} / ${formatTime(duration)}`;
     } else {
       timeline.disabled = true;
-      timecode.textContent = `${formatTime(audio.currentTime)} / --:--.--`;
+      timecode.textContent = `${formatTime(shownTime)} / --:--.--`;
     }
   };
 
@@ -85,15 +101,39 @@ if (renderMode) {
     });
   };
 
-  const seekToTimeline = (): void => {
-    if (!Number.isFinite(audio.duration)) return;
-    const targetTime = Math.max(0, Math.min(audio.duration, Number(timeline.value)));
+  const timelineTarget = (): number | undefined => {
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0) return undefined;
+    return Math.max(0, Math.min(audio.duration, Number(timeline.value)));
+  };
+
+  const previewTimeline = (): void => {
+    const targetTime = timelineTarget();
+    if (targetTime === undefined) return;
+
+    // Crucially, do not write audio.currentTime while the thumb is moving.
+    // Some browsers briefly report the old media time while an async seek is
+    // pending, which made updateTransport snap the range straight back to 0.
+    scrubbing = true;
+    scrubTime = targetTime;
+    committedSeekTime = undefined;
+    renderScrubbedFrame(targetTime);
+    updateTransport();
+    status.textContent = "SCRUBBING";
+  };
+
+  const commitTimeline = (): void => {
+    const targetTime = scrubTime ?? timelineTarget();
+    if (targetTime === undefined) return;
+
+    scrubbing = false;
+    scrubTime = undefined;
+    committedSeekTime = targetTime;
     audio.currentTime = targetTime;
     syncBootClickCursor(targetTime);
-    suppressBeatFrames = 2;
+    suppressBeatFrames = 3;
     renderScrubbedFrame(targetTime);
-    timecode.textContent = `${formatTime(targetTime)} / ${formatTime(audio.duration)}`;
-    status.textContent = audio.paused ? "SCRUB READY" : "PLAYING / SCRUBBING";
+    updateTransport();
+    status.textContent = audio.paused ? "SCRUB READY" : "PLAYING";
   };
 
   audio.addEventListener("loadedmetadata", () => {
@@ -101,11 +141,19 @@ if (renderMode) {
     status.textContent = "SCRUB READY — DRAG TIMELINE ANYWHERE";
   });
   audio.addEventListener("durationchange", updateTransport);
+  audio.addEventListener("seeked", () => {
+    settleCommittedSeek();
+    if (audio.paused) renderScrubbedFrame(audio.currentTime);
+    updateTransport();
+  });
   audio.addEventListener("error", () => {
     status.textContent = "MP3 LOAD FAILED";
   });
   audio.addEventListener("ended", () => {
     cancelAnimationFrame(animationFrame);
+    committedSeekTime = undefined;
+    scrubTime = undefined;
+    scrubbing = false;
     updateTransport();
     playButton.textContent = "RUN AGAIN";
     status.textContent = "NOT EVEN CLOSE.";
@@ -113,20 +161,16 @@ if (renderMode) {
 
   timeline.addEventListener("pointerdown", () => {
     scrubbing = true;
+    scrubTime = displayedTime();
+    committedSeekTime = undefined;
   });
+  timeline.addEventListener("input", previewTimeline);
+  timeline.addEventListener("change", commitTimeline);
   timeline.addEventListener("pointerup", () => {
-    scrubbing = false;
-    updateTransport();
+    if (scrubbing) commitTimeline();
   });
   timeline.addEventListener("pointercancel", () => {
-    scrubbing = false;
-    updateTransport();
-  });
-  timeline.addEventListener("input", seekToTimeline);
-  timeline.addEventListener("change", () => {
-    seekToTimeline();
-    scrubbing = false;
-    updateTransport();
+    if (scrubbing) commitTimeline();
   });
 
   const ensureClickBuffers = (audioContext: AudioContext): void => {
@@ -185,18 +229,23 @@ if (renderMode) {
       beat: Math.min(1, beat),
       high: Math.min(1, high / (data.length * 0.45) * 2)
     };
-    demo.renderFrame(audio.currentTime, lastAudioFrame);
 
-    while (
-      playedBootClicks < C64_BOOT_KEY_TIMES.length &&
-      audio.currentTime >= (C64_BOOT_KEY_TIMES[playedBootClicks] ?? Infinity)
-    ) {
-      playBootClick(playedBootClicks);
-      playedBootClicks += 1;
+    if (scrubbing && scrubTime !== undefined) {
+      renderScrubbedFrame(scrubTime);
+    } else {
+      demo.renderFrame(audio.currentTime, lastAudioFrame);
+
+      while (
+        playedBootClicks < C64_BOOT_KEY_TIMES.length &&
+        audio.currentTime >= (C64_BOOT_KEY_TIMES[playedBootClicks] ?? Infinity)
+      ) {
+        playBootClick(playedBootClicks);
+        playedBootClicks += 1;
+      }
     }
 
     updateTransport();
-    status.textContent = "PLAYING";
+    if (!scrubbing) status.textContent = "PLAYING";
     animationFrame = requestAnimationFrame(frame);
   };
 
@@ -208,6 +257,9 @@ if (renderMode) {
         audio.currentTime = 0;
         playedBootClicks = 0;
         previousEnergy = 0;
+        committedSeekTime = undefined;
+        scrubTime = undefined;
+        scrubbing = false;
         lastAudioFrame = { energy: 0, beat: 0, high: 0 };
       } else {
         syncBootClickCursor(audio.currentTime);
