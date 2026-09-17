@@ -1,4 +1,5 @@
 import "./style.css";
+import { C64_BOOT_KEY_TIMES, synthC64TypewriterClick } from "./boot";
 import { CracktroDemo, type AudioFrame, type RenderApi } from "./demo";
 
 declare global {
@@ -36,6 +37,30 @@ if (renderMode) {
   let data: Uint8Array<ArrayBuffer> | undefined;
   let animationFrame = 0;
   let previousEnergy = 0;
+  let playedBootClicks = 0;
+  const clickBuffers: AudioBuffer[] = [];
+
+  const ensureClickBuffers = (audioContext: AudioContext): void => {
+    if (clickBuffers.length > 0) return;
+    for (let variation = 0; variation < 4; variation += 1) {
+      const samples = synthC64TypewriterClick(audioContext.sampleRate, variation);
+      const buffer = audioContext.createBuffer(1, samples.length, audioContext.sampleRate);
+      buffer.copyToChannel(samples, 0);
+      clickBuffers.push(buffer);
+    }
+  };
+
+  const playBootClick = (index: number): void => {
+    if (!context) return;
+    ensureClickBuffers(context);
+    const source = context.createBufferSource();
+    source.buffer = clickBuffers[index % clickBuffers.length] ?? null;
+    const gain = context.createGain();
+    gain.gain.value = 0.72;
+    source.connect(gain);
+    gain.connect(context.destination);
+    source.start();
+  };
 
   const frame = (): void => {
     if (!audio || !analyser || !data) return;
@@ -55,6 +80,15 @@ if (renderMode) {
       beat: Math.min(1, beat),
       high: Math.min(1, high / (data.length * 0.45) * 2)
     });
+
+    while (
+      playedBootClicks < C64_BOOT_KEY_TIMES.length &&
+      audio.currentTime >= (C64_BOOT_KEY_TIMES[playedBootClicks] ?? Infinity)
+    ) {
+      playBootClick(playedBootClicks);
+      playedBootClicks += 1;
+    }
+
     status.textContent = `${audio.currentTime.toFixed(1)} / ${Number.isFinite(audio.duration) ? audio.duration.toFixed(1) : "..."}`;
     animationFrame = requestAnimationFrame(frame);
   };
@@ -78,6 +112,11 @@ if (renderMode) {
     }
 
     if (audio.paused) {
+      if (audio.ended) {
+        audio.currentTime = 0;
+        playedBootClicks = 0;
+        previousEnergy = 0;
+      }
       await context?.resume();
       await audio.play();
       playButton.textContent = "PAUSE";
