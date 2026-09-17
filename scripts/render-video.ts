@@ -148,7 +148,7 @@ async function main(): Promise<void> {
     const started = performance.now();
     for (let frame = 0; frame < frameCount; frame += 1) {
       const time = frame / FPS;
-      const audio = analysis[Math.min(frame, analysis.length - 1)] ?? { energy: 0, beat: 0, high: 0 };
+      const audio = analysis[Math.min(frame, analysis.length - 1)] ?? { energy: 0, beat: 0, high: 0, bass: 0 };
       await page.evaluate(({ time, audio }) => window.renderFrame(time, audio), { time, audio });
       const png = await page.screenshot({ type: "png" });
       encoderInput.write(png);
