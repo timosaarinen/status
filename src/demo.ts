@@ -3,6 +3,7 @@ import { C64 } from "./palette";
 import { drawGlyph, drawText, textWidth } from "./bitmap-font";
 import { C64_BOOT_END, C64_BOOT_TEXT, c64BootVisibleCharacters, drawC64Text } from "./boot";
 import { drawPhotoPart } from "./photo-part";
+import { pathTrace2FragmentShader, pathTrace2VertexShader } from "./path-trace-2";
 import { fragmentShader, vertexShader } from "./shader";
 
 export interface AudioFrame {
@@ -23,6 +24,8 @@ const SCROLLER_SPEED = 50;
 const SCROLLER_ADVANCE = 6;
 const PATH_TRACE_START = 43;
 const PATH_TRACE_END = 55;
+const PATH_TRACE_2_START = 190;
+const PATH_TRACE_2_END = 216;
 const SCROLLER =
   "*** PAIKALLA. ***  WELCOME TO A CRACKTRO FROM THE WRONG TIMELINE.  " +
   "YOU MAY THINK YOU KNOW WHAT TIMO IS BUILDING.  YOU MAY HAVE SEEN THE CODE, " +
@@ -52,7 +55,9 @@ export class CracktroDemo implements RenderApi {
   private readonly scrollerContext: CanvasRenderingContext2D;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly material: THREE.ShaderMaterial;
+  private readonly trace2Material: THREE.ShaderMaterial;
   private readonly scene = new THREE.Scene();
+  private readonly trace2Scene = new THREE.Scene();
   private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
   constructor(shaderCanvas: HTMLCanvasElement, screen: HTMLCanvasElement) {
@@ -98,20 +103,49 @@ export class CracktroDemo implements RenderApi {
       }
     });
     this.scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.material));
+
+    this.trace2Material = new THREE.ShaderMaterial({
+      vertexShader: pathTrace2VertexShader,
+      fragmentShader: pathTrace2FragmentShader,
+      depthTest: false,
+      depthWrite: false,
+      uniforms: {
+        uTime: { value: 0 },
+        uEnergy: { value: 0 },
+        uBeat: { value: 0 },
+        uBass: { value: 0 },
+        uHigh: { value: 0 },
+        uResolution: { value: new THREE.Vector2(160, 100) }
+      }
+    });
+    this.trace2Scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.trace2Material));
   }
 
   renderFrame(time: number, audio: AudioFrame): void {
     const energy = clamp(audio.energy);
     const beat = clamp(audio.beat);
     const bass = clamp(audio.bass);
-    const traceActive = time >= PATH_TRACE_START && time < PATH_TRACE_END;
+    const high = clamp(audio.high);
+    const tracePart1 = time >= PATH_TRACE_START && time < PATH_TRACE_END;
+    const tracePart2 = time >= PATH_TRACE_2_START && time < PATH_TRACE_2_END;
+
     this.material.uniforms.uTime!.value = time;
     this.material.uniforms.uEnergy!.value = energy;
     this.material.uniforms.uBeat!.value = beat;
     this.material.uniforms.uBass!.value = bass;
     this.material.uniforms.uSection!.value = Math.floor(time / 16);
-    this.material.uniforms.uTraceActive!.value = traceActive ? 1 : 0;
-    this.renderer.render(this.scene, this.camera);
+    this.material.uniforms.uTraceActive!.value = tracePart1 ? 1 : 0;
+
+    if (tracePart2) {
+      this.trace2Material.uniforms.uTime!.value = time;
+      this.trace2Material.uniforms.uEnergy!.value = energy;
+      this.trace2Material.uniforms.uBeat!.value = beat;
+      this.trace2Material.uniforms.uBass!.value = bass;
+      this.trace2Material.uniforms.uHigh!.value = high;
+      this.renderer.render(this.trace2Scene, this.camera);
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
 
     const context = this.context;
     context.fillStyle = C64.black;
@@ -119,8 +153,10 @@ export class CracktroDemo implements RenderApi {
     context.imageSmoothingEnabled = false;
     context.drawImage(this.shaderCanvas, 0, 0, 160, 100, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    if (traceActive) {
-      this.drawPathTracerOverlay(time, beat, bass);
+    if (tracePart1) {
+      this.drawPathTracerOverlay(time, beat, bass, 1);
+    } else if (tracePart2) {
+      this.drawPathTracerOverlay(time, beat, bass, 2);
     } else {
       this.drawRasterAccents(time);
       this.drawTitle(time, energy, beat);
@@ -131,13 +167,16 @@ export class CracktroDemo implements RenderApi {
     this.drawBootText(time);
   }
 
-  private drawPathTracerOverlay(time: number, beat: number, bass: number): void {
+  private drawPathTracerOverlay(time: number, beat: number, bass: number, part: 1 | 2): void {
     const context = this.context;
-    const localTime = time - PATH_TRACE_START;
+    const localTime = time - (part === 2 ? PATH_TRACE_2_START : PATH_TRACE_START);
     const blink = Math.floor(localTime * 4) % 2 === 0;
     const titleColor = beat > 0.82 ? C64.white : C64.lightBlue;
-    const subtitle = "3 BOUNCES / 4 SPP / 16 COLOURS";
-    const rays = "38911 RAYS FREE";
+    const title = part === 2 ? "PATH TRACER 64 II" : "PATH TRACER 64";
+    const subtitle = part === 2
+      ? "SPLINE CAM / MUSIC OBJECTS / 4 SPP"
+      : "3 BOUNCES / 4 SPP / 16 COLOURS";
+    const rays = part === 2 ? "FLY THROUGH THE NOISE" : "38911 RAYS FREE";
 
     context.save();
     context.globalAlpha = 0.88;
@@ -146,7 +185,7 @@ export class CracktroDemo implements RenderApi {
     context.fillRect(0, 142, SCREEN_WIDTH, 17);
     context.restore();
 
-    drawText(context, "PATH TRACER 64", centeredX("PATH TRACER 64", 2), 2, titleColor, 2);
+    drawText(context, title, centeredX(title, 2), 2, titleColor, 2);
     drawText(context, subtitle, centeredX(subtitle, 1), 145, C64.lightGray, 1);
     drawText(context, rays, centeredX(rays, 1), 153, blink ? C64.yellow : C64.orange, 1);
 
