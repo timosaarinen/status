@@ -107,22 +107,62 @@ export const fragmentShader = /* glsl */ `
     return pal(3.0 + band + uSection * 2.0);
   }
 
+  float sdSegment(vec2 p, vec2 a, vec2 b) {
+    vec2 pa = p - a;
+    vec2 ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.000001), 0.0, 1.0);
+    return length(pa - ba * h);
+  }
+
   vec3 starfield(vec2 uv) {
-    vec3 color = pal(6.0) * 0.12;
-    for (int layer = 0; layer < 3; layer += 1) {
-      float depth = float(layer) + 1.0;
-      float speed = 0.13 + depth * 0.19;
-      vec2 p = uv * (7.0 + depth * 4.0);
-      p.x += uTime * speed;
-      p.y += sin(uTime * 0.31 + depth) * 0.7;
-      vec2 cell = floor(p);
-      vec2 local = fract(p) - 0.5;
-      float random = hash21(cell + depth * 19.3);
-      vec2 point = vec2(random - 0.5, hash21(cell + 8.2) - 0.5) * 0.8;
-      float star = step(length(local - point), 0.035 + 0.018 * depth);
-      color += star * pal(12.0 + depth) * (0.78 + uEnergy * 0.35);
+    // Classic 3D starfield: each star has a fixed X/Y and travels toward
+    // the camera along Z. Perspective is the literal X/Z, Y/Z projection.
+    const float nearZ = 0.28;
+    const float farZ = 4.2;
+    const float travelSpeed = 0.72;
+    vec3 color = pal(6.0) * 0.055;
+
+    for (int i = 0; i < 72; i += 1) {
+      float fi = float(i);
+      float seedX = hash21(vec2(fi + 11.0, 3.17));
+      float seedY = hash21(vec2(fi + 53.0, 8.91));
+      float seedZ = hash21(vec2(fi + 97.0, 1.73));
+
+      // Wider X range compensates for the 16:10 display aspect. Stars are
+      // deterministic; only Z changes with time.
+      vec2 world = vec2(
+        (seedX * 2.0 - 1.0) * 2.65,
+        (seedY * 2.0 - 1.0) * 1.65
+      );
+
+      float zRange = farZ - nearZ;
+      float z = nearZ + mod(seedZ * zRange - uTime * travelSpeed + zRange, zRange);
+      float previousZ = min(farZ, z + 0.075 + (1.0 - z / farZ) * 0.10);
+
+      vec2 projected = world / z;
+      vec2 previousProjected = world / previousZ;
+
+      float nearness = 1.0 - clamp((z - nearZ) / zRange, 0.0, 1.0);
+      float radius = 0.006 + nearness * 0.014;
+      float dotStar = 1.0 - smoothstep(radius, radius + 0.008, length(uv - projected));
+
+      // A short radial tail appears only as stars get close. It is derived
+      // from the same perspective projection, not a separate motion effect.
+      float tailWidth = 0.0035 + nearness * 0.006;
+      float tail = 1.0 - smoothstep(
+        tailWidth,
+        tailWidth + 0.006,
+        sdSegment(uv, previousProjected, projected)
+      );
+      tail *= smoothstep(0.45, 0.95, nearness) * 0.62;
+
+      float brightness = 0.30 + nearness * 0.85;
+      vec3 starColor = nearness > 0.72 ? pal(1.0) : pal(14.0);
+      color += starColor * max(dotStar, tail) * brightness;
     }
-    return color;
+
+    // Music may brighten the stars, but never changes their trajectory.
+    return color * (0.94 + uEnergy * 0.12);
   }
 
   vec3 copperBars(vec2 uv) {
