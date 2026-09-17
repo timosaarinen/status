@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { C64 } from "./palette";
 import { drawGlyph, drawText, textWidth } from "./bitmap-font";
 import { C64_BOOT_END, C64_BOOT_TEXT, c64BootVisibleCharacters, drawC64Text } from "./boot";
+import { drawPhotoPart } from "./photo-part";
 import { fragmentShader, vertexShader } from "./shader";
 
 export interface AudioFrame {
@@ -112,6 +113,7 @@ export class CracktroDemo implements RenderApi {
     this.drawRasterAccents(time);
     this.drawTitle(time, energy, beat);
     this.drawScroller(time, beat);
+    drawPhotoPart(context, time, energy, beat);
     this.drawBorder(time, beat);
     this.drawBootText(time);
   }
