@@ -46,6 +46,7 @@ if (renderMode) {
   let mediaSource: MediaElementAudioSourceNode | undefined;
   let animationFrame = 0;
   let previousEnergy = 0;
+  let previousBassLevel = 0;
   let smoothedBass = 0;
   let playedBootClicks = 0;
   let suppressBeatFrames = 0;
@@ -55,8 +56,6 @@ if (renderMode) {
   let lastAudioFrame: AudioFrame = { energy: 0, beat: 0, high: 0, bass: 0 };
   const clickBuffers: AudioBuffer[] = [];
 
-  // Load enough of the media for arbitrary seeking during development. The
-  // AudioContext itself still waits for a user gesture, as required by browsers.
   const audio = new Audio("/__audio.mp3");
   audio.preload = "auto";
 
@@ -74,9 +73,7 @@ if (renderMode) {
 
   const settleCommittedSeek = (): void => {
     if (committedSeekTime === undefined || audio.seeking) return;
-    if (Math.abs(audio.currentTime - committedSeekTime) <= 0.35) {
-      committedSeekTime = undefined;
-    }
+    if (Math.abs(audio.currentTime - committedSeekTime) <= 0.35) committedSeekTime = undefined;
   };
 
   const updateTransport = (): void => {
@@ -111,7 +108,6 @@ if (renderMode) {
   const previewTimeline = (): void => {
     const targetTime = timelineTarget();
     if (targetTime === undefined) return;
-
     scrubbing = true;
     scrubTime = targetTime;
     committedSeekTime = undefined;
@@ -123,7 +119,6 @@ if (renderMode) {
   const commitTimeline = (): void => {
     const targetTime = scrubTime ?? timelineTarget();
     if (targetTime === undefined) return;
-
     scrubbing = false;
     scrubTime = undefined;
     committedSeekTime = targetTime;
@@ -187,7 +182,7 @@ if (renderMode) {
     context = new AudioContext();
     analyser = context.createAnalyser();
     analyser.fftSize = 1024;
-    analyser.smoothingTimeConstant = 0.42;
+    analyser.smoothingTimeConstant = 0.30;
     data = new Uint8Array(analyser.frequencyBinCount);
     mediaSource = context.createMediaElementSource(audio);
     mediaSource.connect(analyser);
@@ -217,19 +212,21 @@ if (renderMode) {
       const value = (data[index] ?? 0) / 255;
       sum += value * value;
       if (index > data.length * 0.55) high += value;
-      // fftSize 1024 => roughly 43–47 Hz/bin on normal desktop sample rates.
-      // Bins 1..5 therefore isolate the kick/bass region instead of using
-      // generic full-band energy for the 3D-object pulse.
       if (index >= 1 && index <= 5) {
         bassSquares += value * value;
         bassBins += 1;
       }
     }
+
     const energy = Math.sqrt(sum / data.length);
-    const bassNow = Math.min(1, Math.sqrt(bassSquares / Math.max(1, bassBins)) * 1.75);
-    smoothedBass = bassNow > smoothedBass
-      ? smoothedBass * 0.24 + bassNow * 0.76
-      : smoothedBass * 0.74 + bassNow * 0.26;
+    const bassLevel = Math.min(1, Math.sqrt(bassSquares / Math.max(1, bassBins)) * 1.65);
+    const bassOnset = Math.max(0, bassLevel - previousBassLevel * 0.88) * 4.2;
+    previousBassLevel = previousBassLevel * 0.62 + bassLevel * 0.38;
+    const bassPulse = Math.min(1, bassLevel * 0.16 + bassOnset);
+    smoothedBass = bassPulse > smoothedBass
+      ? smoothedBass * 0.10 + bassPulse * 0.90
+      : smoothedBass * 0.55 + bassPulse * 0.45;
+
     let beat = Math.max(0, energy - previousEnergy * 0.93) * 8;
     previousEnergy = previousEnergy * 0.72 + energy * 0.28;
     if (suppressBeatFrames > 0) {
@@ -248,7 +245,6 @@ if (renderMode) {
       renderScrubbedFrame(scrubTime);
     } else {
       demo.renderFrame(audio.currentTime, lastAudioFrame);
-
       while (
         playedBootClicks < C64_BOOT_KEY_TIMES.length &&
         audio.currentTime >= (C64_BOOT_KEY_TIMES[playedBootClicks] ?? Infinity)
@@ -271,6 +267,7 @@ if (renderMode) {
         audio.currentTime = 0;
         playedBootClicks = 0;
         previousEnergy = 0;
+        previousBassLevel = 0;
         smoothedBass = 0;
         committedSeekTime = undefined;
         scrubTime = undefined;
