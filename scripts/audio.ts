@@ -92,6 +92,8 @@ export function analyseAudio(samples: Float32Array, sampleRate: number, fps: num
   const frames: AnalysisFrame[] = [];
   let running = rawEnergy[0] ?? 0;
   let previous = running;
+  let runningBass = rawBass[0] ?? 0;
+  let previousBass = runningBass;
   let smoothedBass = 0;
 
   for (let frame = 0; frame < frameCount; frame += 1) {
@@ -99,11 +101,21 @@ export function analyseAudio(samples: Float32Array, sampleRate: number, fps: num
     running = running * 0.965 + current * 0.035;
     const onset = Math.max(0, current - Math.max(running * 1.22, previous * 0.92));
     const beat = Math.min(1, onset / Math.max(energyReference * 0.24, 0.0001));
-    const bassNow = Math.min(1, (rawBass[frame] ?? 0) / bassReference);
-    // Fast attack, slower release keeps the object punchy rather than jittery.
-    smoothedBass = bassNow > smoothedBass
-      ? smoothedBass * 0.28 + bassNow * 0.72
-      : smoothedBass * 0.78 + bassNow * 0.22;
+
+    const currentBass = rawBass[frame] ?? 0;
+    runningBass = runningBass * 0.94 + currentBass * 0.06;
+    const bassLevel = Math.min(1, currentBass / bassReference);
+    const bassOnset = Math.max(0, currentBass - Math.max(runningBass * 1.08, previousBass * 0.88));
+    const bassPulse = Math.min(
+      1,
+      bassLevel * 0.18 + bassOnset / Math.max(bassReference * 0.12, 0.0001)
+    );
+    // Very fast attack, obvious release: this is for visible kick pumping, not
+    // a pretty VU meter.
+    smoothedBass = bassPulse > smoothedBass
+      ? smoothedBass * 0.12 + bassPulse * 0.88
+      : smoothedBass * 0.58 + bassPulse * 0.42;
+
     frames.push({
       energy: Math.min(1, current / energyReference),
       beat,
@@ -111,6 +123,7 @@ export function analyseAudio(samples: Float32Array, sampleRate: number, fps: num
       bass: Math.min(1, smoothedBass)
     });
     previous = current;
+    previousBass = currentBass;
   }
   return frames;
 }
