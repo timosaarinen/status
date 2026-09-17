@@ -11,9 +11,24 @@
         <canvas id="shader" width="160" height="100"></canvas>
         <canvas id="screen" width="320" height="200"></canvas>
       </section>
-      <section id="controls">
+      <section id="controls" aria-label="Playback controls">
         <button id="play" type="button">LOAD &amp; RUN</button>
-        <span id="status">PUT ONE MP3 IN THE REPO ROOT</span>
+        <div id="transport">
+          <input
+            id="timeline"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0"
+            disabled
+            aria-label="Demo timeline"
+          />
+          <div id="transport-readout">
+            <span id="timecode">0:00.00 / --:--.--</span>
+            <span id="status">LOADING TIMELINE...</span>
+          </div>
+        </div>
       </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
