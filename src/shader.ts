@@ -166,17 +166,61 @@ export const fragmentShader = /* glsl */ `
   }
 
   vec3 copperBars(vec2 uv) {
-    float y = uv.y;
+    // Deliberately raster-ish instead of smooth gradient bars. Their slow
+    // choreography is time-driven; the beat only punches width, separation,
+    // palette and brightness so hits feel violent without positional jitter.
+    float beat = clamp(uBeat, 0.0, 1.0);
+    float punch = pow(smoothstep(0.08, 0.96, beat), 0.58);
+    float hot = smoothstep(0.76, 1.0, beat);
+    float lineY = floor(gl_FragCoord.y) / uResolution.y;
     vec3 color = vec3(0.0);
-    for (int i = 0; i < 4; i += 1) {
+
+    for (int i = 0; i < 6; i += 1) {
       float fi = float(i);
-      float center = -0.58 + fi * 0.38 + sin(uTime * (0.72 + fi * 0.05) + fi * 1.7) * 0.12;
-      float width = 0.026 + 0.006 * sin(uTime * 1.1 + fi);
-      float stripe = 1.0 - smoothstep(width, width + 0.014, abs(y - center));
-      float scan = floor((y - center) / max(width, 0.001) * 3.0);
-      color += stripe * pal(8.0 + fi + scan + floor(uTime * 2.0));
+      float lane = fi - 2.5;
+      float center = -0.72 + fi * 0.285;
+      center += sin(uTime * (0.58 + fi * 0.035) + fi * 1.73) * (0.070 + punch * 0.035);
+      center += lane * punch * 0.010;
+
+      // Thickness is measured in native 100-line shader pixels. A hard hit
+      // can more than double it, like an absurd raster interrupt gone loud.
+      float halfLines = 1.3 + mod(fi, 2.0) * 0.8 + punch * (2.8 + fi * 0.24);
+      float distanceLines = abs((uv.y - center) * uResolution.y * 0.5);
+      float body = 1.0 - step(halfLines + 0.5, distanceLines);
+      if (body < 0.5) continue;
+
+      float signedLine = floor((uv.y - center) * uResolution.y * 0.5);
+      float band = abs(signedLine);
+
+      // Stepped palette changes every raster line. Beat hits kick the entire
+      // copper list several colours forward at once.
+      float paletteKick = floor(punch * 7.0);
+      float paletteIndex = 8.0 + fi * 1.7 + band + floor(uTime * 1.5) + paletteKick;
+      vec3 stripeColor = pal(paletteIndex);
+
+      // Alternating scanlines keep it crunchy at 160x100 rather than looking
+      // like a modern bloom bar.
+      float scan = mod(floor(lineY * uResolution.y) + fi, 2.0);
+      stripeColor *= 0.72 + scan * 0.28;
+
+      // White-hot one-line cores and occasional secondary echoes on strong
+      // beats make the bars visibly "slam" without moving their base phase.
+      float core = 1.0 - step(0.55, band);
+      stripeColor = mix(stripeColor, pal(1.0), core * hot);
+
+      color = max(color, stripeColor * (0.72 + punch * 0.55));
+
+      float echoDistance = abs(distanceLines - (halfLines + 1.5 + punch * 1.8));
+      float echo = (1.0 - step(0.65, echoDistance)) * hot;
+      color = max(color, pal(14.0 + fi) * echo * 0.82);
     }
-    return color;
+
+    // Full-screen one-raster-line flash at the hardest hits: intentionally
+    // obnoxious, very demo-scene, and only a single native scanline tall.
+    float flashLine = 1.0 - step(0.5, abs(gl_FragCoord.y - mod(floor(uTime * 50.0), uResolution.y)));
+    color = max(color, pal(1.0) * flashLine * smoothstep(0.90, 1.0, beat));
+
+    return min(color, vec3(1.0));
   }
 
   void main() {
@@ -184,7 +228,7 @@ export const fragmentShader = /* glsl */ `
     vec2 uv = (frag * 2.0 - uResolution.xy) / uResolution.y;
 
     vec3 color = starfield(uv);
-    color = max(color, copperBars(uv) * 0.82);
+    color = max(color, copperBars(uv));
 
     vec3 objectColor = objectLayer(uv);
     color = max(color, objectColor * 0.92);
