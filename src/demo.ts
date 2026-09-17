@@ -211,11 +211,15 @@ export class CracktroDemo implements RenderApi {
   private drawScroller(time: number, beat: number): void {
     const context = this.context;
     const strip = this.scrollerContext;
-    const totalWidth = SCROLLER.length * SCROLLER_ADVANCE;
-    const offset = ((time * SCROLLER_SPEED) % totalWidth + totalWidth) % totalWidth;
-    const firstCharacter = Math.floor(offset / SCROLLER_ADVANCE);
-    const fineOffset = Math.floor(offset % SCROLLER_ADVANCE);
-    const visibleCount = Math.ceil(SCREEN_WIDTH / SCROLLER_ADVANCE) + 2;
+
+    // Start the scroller only after the C64 boot/typewriter section. The text
+    // begins completely off-screen at x=320 and enters naturally from the
+    // right instead of inheriting several seconds of hidden scroll time.
+    const scrollTime = Math.max(0, time - C64_BOOT_END);
+    const textWidthPixels = SCROLLER.length * SCROLLER_ADVANCE;
+    const cycleWidth = SCREEN_WIDTH + textWidthPixels;
+    const cycleOffset = (scrollTime * SCROLLER_SPEED) % cycleWidth;
+    const startX = SCREEN_WIDTH - cycleOffset;
 
     context.fillStyle = C64.black;
     context.fillRect(0, SCROLLER_TOP, SCREEN_WIDTH, SCREEN_HEIGHT - SCROLLER_TOP);
@@ -227,10 +231,19 @@ export class CracktroDemo implements RenderApi {
     context.fillRect(0, SCREEN_HEIGHT - 2, SCREEN_WIDTH, 1);
 
     strip.clearRect(0, 0, SCREEN_WIDTH, 7);
-    for (let column = -1; column < visibleCount; column += 1) {
-      const sourceIndex = (firstCharacter + column + SCROLLER.length) % SCROLLER.length;
+
+    // Only draw characters whose cells can overlap the 320-pixel strip. This
+    // keeps the entrance/exit non-wrapping while still allowing the whole
+    // message to restart from the right after it has completely left the left.
+    const firstCharacter = Math.max(0, Math.floor((-startX) / SCROLLER_ADVANCE) - 1);
+    const lastCharacter = Math.min(
+      SCROLLER.length - 1,
+      Math.ceil((SCREEN_WIDTH - startX) / SCROLLER_ADVANCE) + 1
+    );
+
+    for (let sourceIndex = firstCharacter; sourceIndex <= lastCharacter; sourceIndex += 1) {
       const character = SCROLLER[sourceIndex] ?? " ";
-      const x = column * SCROLLER_ADVANCE - fineOffset;
+      const x = Math.round(startX + sourceIndex * SCROLLER_ADVANCE);
       const color = beat > 0.9
         ? C64.white
         : SCROLLER_COLORS[Math.floor(sourceIndex / 3) % SCROLLER_COLORS.length] ?? C64.cyan;
