@@ -1,0 +1,45 @@
+name: Cracktro CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify-and-render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Install Chromium and FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          bunx playwright install --with-deps chromium
+
+      - name: Validate
+        run: |
+          bun run check
+          bun test
+          bun run build
+
+      - name: Render two-second smoke video
+        run: bun run render:video -- --seconds 2 --output output/smoke.mp4
+
+      - name: Inspect smoke video
+        run: |
+          test -s output/smoke.mp4
+          ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate -of json output/smoke.mp4
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: status-cracktro-smoke
+          path: output/smoke.mp4
