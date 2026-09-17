@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { C64 } from "./palette";
 import { drawGlyph, drawText, textWidth } from "./bitmap-font";
+import { C64_BOOT_END, C64_BOOT_TEXT, c64BootVisibleCharacters, drawC64Text } from "./boot";
 import { fragmentShader, vertexShader } from "./shader";
 
 export interface AudioFrame {
@@ -135,7 +136,7 @@ export class CracktroDemo implements RenderApi {
   }
 
   private drawTitle(time: number, energy: number, beat: number): void {
-    if (time <= 0.8) return;
+    if (time <= C64_BOOT_END) return;
 
     const context = this.context;
     const pulse = Math.sin(time * 1.45) > 0 ? C64.purple : C64.blue;
@@ -152,7 +153,7 @@ export class CracktroDemo implements RenderApi {
       drawText(context, line.text, x, line.y, line.color, line.scale);
     }
 
-    const tag = energy < 0.08 && time > 2 ? "THINK YOU KNOW ME?" : "STATUS / 2026";
+    const tag = energy < 0.08 && time > C64_BOOT_END + 1.2 ? "THINK YOU KNOW ME?" : "STATUS / 2026";
     drawText(context, tag, centeredX(tag, 1), 116, C64.lightGray, 1);
 
     if (beat > 0.78) {
@@ -206,6 +207,7 @@ export class CracktroDemo implements RenderApi {
   }
 
   private drawBorder(time: number, beat: number): void {
+    if (time <= C64_BOOT_END) return;
     const context = this.context;
     const colors = [C64.blue, C64.purple, C64.lightBlue] as const;
     const color = beat > 0.88 ? C64.white : colors[Math.floor(time * 0.75) % colors.length] ?? C64.blue;
@@ -215,12 +217,24 @@ export class CracktroDemo implements RenderApi {
   }
 
   private drawBootText(time: number): void {
-    if (time >= 0.8) return;
-    const phase = Math.floor(time * 12);
-    const text = phase < 3 ? "READY." : phase < 6 ? "RUN" : "PAIKALLA.";
-    this.context.fillStyle = C64.blue;
-    this.context.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-    drawText(this.context, text, 18, 24, C64.lightBlue, 2);
-    if (phase >= 3) drawText(this.context, "STATUS 2026", 18, 48, C64.white, 1);
+    if (time > C64_BOOT_END) return;
+
+    const context = this.context;
+    context.fillStyle = C64.blue;
+    context.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    drawC64Text(context, "**** COMMODORE 64 BASIC V2 ****", 4, 1, C64.lightBlue);
+    drawC64Text(context, "64K RAM SYSTEM  38911 BASIC BYTES FREE", 1, 3, C64.lightBlue);
+
+    const visibleCount = c64BootVisibleCharacters(time);
+    const typed = C64_BOOT_TEXT.slice(0, visibleCount);
+    drawC64Text(context, typed, 0, 7, C64.lightBlue);
+
+    const cursorVisible = Math.floor(time * 2) % 2 === 0;
+    if (cursorVisible) {
+      const cursorColumn = Math.min(39, visibleCount);
+      context.fillStyle = C64.lightBlue;
+      context.fillRect(cursorColumn * 8, 7 * 8, 8, 8);
+    }
   }
 }
