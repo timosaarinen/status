@@ -83,7 +83,7 @@ export function drawC64Text(
 
 // Approximation of Compute!'s 1988 C64 Key Clicker "TYPEWRITER" patch:
 // SID voice 2 data 0,255,0,0,128,19,0 and gate toggling 128/129 per key.
-export function synthC64TypewriterClick(sampleRate: number, variation = 0): Float32Array {
+export function synthC64TypewriterClick(sampleRate: number, variation = 0): Float32Array<ArrayBuffer> {
   const duration = 0.085;
   const samples = new Float32Array(Math.ceil(duration * sampleRate));
   const sidClock = 985_248;
